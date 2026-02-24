@@ -25,6 +25,7 @@ declare "kubernetes" {
         forward_to = argument.forward_to.value
 
         stage.match {
+            selector = "{job=\"integrations/kubernetes/eventhandler\"}"
             pipeline_name = "try_json"
 
             stage.json {
