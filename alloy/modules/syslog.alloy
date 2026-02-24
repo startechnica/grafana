@@ -106,9 +106,7 @@ declare "log" {
             }
         }
 
-        forward_to = [
-            loki.write.default.receiver,
-        ]
+        forward_to = argument.forward_to.value
     }
 
 }
