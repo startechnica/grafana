@@ -13,6 +13,10 @@ declare "kubernetes" {
     }
     argument "tenant_id" {}
 
+    argument "drop_normal_events" {
+        default = true
+    }
+
     loki.source.kubernetes_events "cluster_events" {
         job_name   = coalesce(argument.job_label.value, "integrations/kubernetes/eventhandler")
         log_format = coalesce(argument.job_label.value, "json")
@@ -64,11 +68,10 @@ declare "kubernetes" {
         //    }
         //}
 
-        //stage.match {
-        //    selector = "{type=\"Normal\"}"
-        //    action   = "drop"
-        //}
-
+        stage.match {
+            selector = "{type=\"Normal\"}"
+            action   = action   = argument.event_verbosity == "all" ? "keep" : "drop"
+        }
 
         stage.template {
             source   = "severity"
