@@ -51,18 +51,18 @@ declare "kubernetes" {
             }
         }
 
-        stage.logfmt {
-            mapping = {
-                type      = "type",
-                reason    = "reason",
-                namespace = "namespace",
-                kind      = "kind",
-                source    = "sourcecomponent",
-                node      = "name",
-                message   = "msg",
-                count     = "count",
-            }
-        }
+        //stage.logfmt {
+        //    mapping = {
+        //        type      = "type",
+        //        reason    = "reason",
+        //        namespace = "namespace",
+        //        kind      = "kind",
+        //        source    = "sourcecomponent",
+        //        node      = "name",
+        //        message   = "msg",
+        //        count     = "count",
+        //    }
+        //}
 
         //stage.match {
         //    selector = "{type=\"Normal\"}"
