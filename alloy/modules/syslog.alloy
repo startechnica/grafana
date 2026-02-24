@@ -106,9 +106,7 @@ declare "log" {
             }
         }
 
-        forward_to = [
-            loki.write.skydata_loki.receiver,
-        ]
+        forward_to = argument.forward_to.value
     }
 
 }
