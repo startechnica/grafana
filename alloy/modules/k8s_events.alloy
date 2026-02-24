@@ -70,7 +70,8 @@ declare "kubernetes" {
 
         stage.match {
             selector = "{type=\"Normal\"}"
-            action   = argument.drop_normal_events.value ? "drop" : "keep"
+            action   = "drop"
+            //action   = argument.drop_normal_events.value ? "drop" : "keep"
         }
 
         stage.template {
