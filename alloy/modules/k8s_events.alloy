@@ -15,6 +15,7 @@ declare "kubernetes" {
 
     argument "drop_normal_events" {
         default = true
+        optional = true
     }
 
     loki.source.kubernetes_events "cluster_events" {
