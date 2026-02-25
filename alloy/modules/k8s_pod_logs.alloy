@@ -67,13 +67,6 @@ declare "kubernetes" {
             target_label  = "app"
         }
 
-        //rule {
-        //    target_label = "tenant_id"
-        //    replacement  = argument.tenant_id.value
-        //    action       = "replace"
-        //    regex        = "^$"
-        //}
-
         rule {
             source_labels = [
                 "__meta_kubernetes_namespace",
@@ -99,11 +92,6 @@ declare "kubernetes" {
             action       = "replace"
             target_label = "project_name"
         }
-
-        //rule {
-        //    target_label = "cluster_name"
-        //    replacement  = argument.cluster_name
-        //}
 
         rule {
             source_labels = [
@@ -134,7 +122,7 @@ declare "kubernetes" {
             expression = ".*(/ping).*kube-probe.*|.*kube-probe.*/ping.*"
         }
         stage.drop {
-            expression = "kube-probe"
+            expression = "kube-probe|/ping"
         }
         stage.drop {
             expression = ".*/actuator/health.*"
