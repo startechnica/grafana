@@ -134,12 +134,12 @@ declare "kubernetes" {
         }
 
         stage.replace {
-            expression = "data:image\\/png;base64,([A-Za-z0-9+/=]+)"
+            expression = `data:image\\/png;base64,([A-Za-z0-9+/]+={0,2})`
             replace = "[REDUCED]"
         }
 
         stage.replace {
-            expression = "\"_message_1\":\"([A-Za-z0-9+/]+{0,2})\""
+            expression = "\"_message_1\":\"([A-Za-z0-9+/]+={0,2})\""
             replace = "[REDACTED]"
         }
 
