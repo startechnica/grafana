@@ -129,11 +129,12 @@ declare "kubernetes" {
         }
 
         stage.match {
-          selector = "{redact=\"true\"}"
-              stage.replace {
+            selector = "{redact=\"true\"}"
+
+            stage.replace {
                 expression = "\"_message_1\":\"([A-Za-z0-9+/]+={0,2})\""
                 replace    = "[REDACTED]"
-         }
+            }
         }
 
         stage.replace {
@@ -146,10 +147,10 @@ declare "kubernetes" {
             replace = "[REDUCED]"
         }
 
-        stage.replace {
-            expression = "\"_message_1\":\"([A-Za-z0-9+/]+={0,2})\""
-            replace = "[REDACTED]"
-        }
+        //stage.replace {
+        //    expression = "\"_message_1\":\"([A-Za-z0-9+/]+={0,2})\""
+        //    replace = "[REDACTED]"
+        //}
 
         stage.replace {
             expression = `"imageBase64":"(UklGR[A-Za-z0-9+/]+={0,2})"`
