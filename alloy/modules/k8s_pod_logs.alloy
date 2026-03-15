@@ -111,7 +111,7 @@ declare "kubernetes" {
 
     loki.source.kubernetes "pods" {
         targets    = discovery.relabel.pods.output
-        forward_to = [loki.process.pods.receiver]
+        forward_to = [loki.process.router.receiver]
     }
 
     loki.process "redacted" {
@@ -178,7 +178,7 @@ declare "kubernetes" {
     }
 
     loki.process "router" {
-        forward_to = [loki.process.redacted.receiver]  // default: redact everything
+        forward_to = [loki.process.redacted.receiver]
 
         stage.match {
             selector   = "{redact=\"false\"}"             // only opt-out streams skip redaction
