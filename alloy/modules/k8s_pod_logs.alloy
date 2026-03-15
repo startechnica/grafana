@@ -111,7 +111,7 @@ declare "kubernetes" {
 
     loki.source.kubernetes "pods" {
         targets    = discovery.relabel.pods.output
-        forward_to = [loki.process.router.receiver]
+        forward_to = [loki.process.pods.receiver]
     }
 
     loki.process "redacted" {
@@ -120,11 +120,6 @@ declare "kubernetes" {
         stage.replace {
             expression = "\"_message_1\":\"([A-Za-z0-9+/]+={0,2})\""
             replace    = "[REDACTED]"
-        }
-
-        stage.replace {
-            expression = `(?i)\[?"?(?:access-token|bearer|signature|x-envoy-peer-metadata)"?\]?\s?:\s?\[?"?\s?([A-Za-z0-9\-._+/]+={0,2})["']?\]?`
-            replace = "[REDACTED]"
         }
     }
 
@@ -147,13 +142,18 @@ declare "kubernetes" {
         }
 
         stage.replace {
-            expression = "Bearer\\s+([A-Za-z0-9\\-._~+/]+=*)"
+            expression = `(?i)bearer\s+([A-Za-z0-9\-._~+/]+={0,2})`
             replace = "[REDACTED]"
         }
 
         stage.replace {
             expression = `data:image\\/png;base64,([A-Za-z0-9+/]+={0,2})`
             replace = "[REDUCED]"
+        }
+
+        stage.replace {
+            expression = `(?i)\[?"?(?:access-token|signature|x-envoy-peer-metadata)"?\]?\s?:\s?\[?"?\s?([A-Za-z0-9\-._+/]+={0,2})["']?\]?`
+            replace = "[REDACTED]"
         }
 
         //stage.replace {
@@ -177,12 +177,4 @@ declare "kubernetes" {
         }
     }
 
-    loki.process "router" {
-        forward_to = [loki.process.redacted.receiver]
-
-        stage.match {
-            selector   = "{redact=\"false\"}"             // only opt-out streams skip redaction
-            forward_to = [loki.process.pods.receiver]
-        }
-    }
 }
