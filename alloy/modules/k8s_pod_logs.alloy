@@ -21,6 +21,10 @@ declare "kubernetes" {
         optional = true
     }
 
+    argument "redacted_label_selectors" {
+        optional = true
+    }
+
     discovery.kubernetes "pods" {
         role = "pod"
         namespaces {
@@ -110,6 +114,20 @@ declare "kubernetes" {
         forward_to = [loki.process.pods.receiver]
     }
 
+    loki.process "redacted" {
+        forward_to = [loki.process.pods.receiver]
+
+        stage.replace {
+            expression = "\"_message_1\":\"([A-Za-z0-9+/]+={0,2})\""
+            replace    = "[REDACTED]"
+        }
+
+        stage.replace {
+            expression = `(?i)\[?"?(?:access-token|bearer|signature|x-envoy-peer-metadata)"?\]?\s?:\s?\[?"?\s?([A-Za-z0-9\-._+/]+={0,2})["']?\]?`
+            replace = "[REDACTED]"
+        }
+    }
+
     // loki.process receives log entries from other Loki components, applies one or more processing stages,
     // and forwards the results to the list of receivers in the component's arguments.
     loki.process "pods" {
@@ -126,15 +144,6 @@ declare "kubernetes" {
         }
         stage.drop {
             expression = ".*/actuator/health.*"
-        }
-
-        stage.match {
-            selector = "{redact=\"true\"}"
-
-            stage.replace {
-                expression = "\"_message_1\":\"([A-Za-z0-9+/]+={0,2})\""
-                replace    = "[REDACTED]"
-            }
         }
 
         stage.replace {
@@ -157,11 +166,6 @@ declare "kubernetes" {
             replace = "[REDUCED]"
         }
 
-        stage.replace {
-            expression = `(?i)\[?"?(?:access-token|bearer|signature|x-envoy-peer-metadata)"?\]?\s?:\s?\[?"?\s?([A-Za-z0-9\-._+/]+={0,2})["']?\]?`
-            replace = "[REDACTED]"
-        }
-
         stage.static_labels {
             values = {
                 cluster_name  = sys.env("CLUSTER_NAME"),
@@ -170,6 +174,15 @@ declare "kubernetes" {
 
         stage.tenant {
             value = argument.tenant_id.value
+        }
+    }
+
+    loki.process "router" {
+        forward_to = [loki.process.redacted.receiver]  // default: redact everything
+
+        stage.match {
+            selector   = "{redact=\"false\"}"             // only opt-out streams skip redaction
+            forward_to = [loki.process.pods.receiver]
         }
     }
 }
