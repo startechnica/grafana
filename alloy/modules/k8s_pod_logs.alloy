@@ -41,11 +41,11 @@ declare "kubernetes" {
             target_label  = "namespace"
         }
 
-        rule {
-            source_labels = ["__meta_kubernetes_pod_name"]
-            action        = "replace"
-            target_label  = "pod"
-        }
+        //rule {
+        //    source_labels = ["__meta_kubernetes_pod_name"]
+        //    action        = "replace"
+        //    target_label  = "pod"
+        //}
 
         rule {
             source_labels = ["__meta_kubernetes_pod_node_name"]
