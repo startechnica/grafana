@@ -127,6 +127,10 @@ declare "kubernetes" {
     // and forwards the results to the list of receivers in the component's arguments.
     loki.process "pods" {
         forward_to = argument.forward_to.value
+        
+        stage.labeldrop {
+            values = ["instance"]
+        }
 
         stage.drop {
             expression = ".*(/health).*kube-probe.*|.*kube-probe.*/health.*"
