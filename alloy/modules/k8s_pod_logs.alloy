@@ -128,7 +128,7 @@ declare "kubernetes" {
     loki.process "pods" {
         forward_to = argument.forward_to.value
         
-        stage.labeldrop {
+        stage.label_drop {
             values = ["instance"]
         }
 
