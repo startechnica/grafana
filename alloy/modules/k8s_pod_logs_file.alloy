@@ -70,7 +70,7 @@ declare "kubernetes" {
 		// node-scoped via the spec.nodeName field selector.
 		selectors {
 			role  = "pod"
-			field = format("spec.nodeName=%s", coalesce(argument.node_name.value, sys.env("NODE_NAME")))
+			field = "spec.nodeName=" + coalesce(argument.node_name.value, sys.env("NODE_NAME"))
 		}
 	}
 
