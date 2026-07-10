@@ -48,7 +48,7 @@ declare "kubernetes" {
 	}
 
 	argument "node_name" {
-		comment  = "The node name used for node-local discovery (default: sys.env(\"NODE_NAME\"))"
+		comment  = "The node name used for node-local discovery (default: sys.env(\"K8S_NODE_NAME\"), injected by the Alloy Helm chart)"
 		optional = true
 	}
 
@@ -73,7 +73,7 @@ declare "kubernetes" {
 		// pods, so discovery is node-scoped via the spec.nodeName selector.
 		selectors {
 			role  = "pod"
-			field = "spec.nodeName=" + coalesce(argument.node_name.value, sys.env("NODE_NAME"))
+			field = "spec.nodeName=" + coalesce(argument.node_name.value, sys.env("K8S_NODE_NAME"))
 		}
 	}
 
