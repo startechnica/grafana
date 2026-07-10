@@ -235,6 +235,54 @@ declare "kubernetes" {
 			values = ["instance"]
 		}
 
+		// --- Baseline noise drops ------------------------------------------
+		// Kubernetes / cloud health-check probes. Anchored so real request
+		// paths that merely contain "ping"/"health" are not dropped.
+		stage.drop {
+			expression = "(?i)(kube-probe|ELB-HealthChecker|GoogleHC|Consul Health Check)"
+		}
+
+		stage.drop {
+			expression = "\\s\\/(healthz|livez|readyz|health|ping)(\\?\\S*)?\\s+HTTP\\/"
+		}
+
+		stage.drop {
+			expression = "\\s\\/-\\/(healthy|ready)(\\?\\S*)?\\s+HTTP\\/"
+		}
+
+		stage.drop {
+			expression = "\\/actuator\\/health"
+		}
+
+		// --- Baseline secret redaction -------------------------------------
+		// Base64 image payloads (bloat, not secrets).
+		stage.replace {
+			expression = `data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+\/]+={0,2})`
+			replace    = "[REDUCED]"
+		}
+
+		stage.replace {
+			expression = `"imageBase64":"(UklGR[A-Za-z0-9+\/]+={0,2})"`
+			replace    = "[REDUCED]"
+		}
+
+		// Auth material commonly leaked in request/response logs.
+		stage.replace {
+			expression = `(?i)\[?"?(?:access-token|signature|x-envoy-peer-metadata)"?\]?\s?:\s?\[?"?\s?([A-Za-z0-9\-._+\/]+={0,2})["']?\]?`
+			replace    = "[REDACTED]"
+		}
+
+		// AWS access key IDs and secret access keys.
+		stage.replace {
+			expression = `(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}`
+			replace    = "[REDACTED_AWS_KEY_ID]"
+		}
+
+		stage.replace {
+			expression = `(?i)aws.{0,20}(secret|access).{0,20}key.{0,5}["' :=]{1,5}([A-Za-z0-9\/+]{40})`
+			replace    = "[REDACTED_AWS_SECRET]"
+		}
+
 		// Static cluster_name label.
 		stage.static_labels {
 			values = {
