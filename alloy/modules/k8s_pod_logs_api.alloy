@@ -1,0 +1,249 @@
+// k8s_pod_logs_api
+//
+// Collect Kubernetes pod logs by streaming them through the Kubernetes API
+// server's pod/log endpoint (the same source `kubectl logs` uses). Unlike the
+// file-based collector, this reads no host files and works regardless of the
+// controller type, but it opens one long-lived API connection per container
+// and puts read load on the apiserver/etcd.
+//
+// When run as a DaemonSet, discovery is scoped to the local node via a
+// spec.nodeName field selector so each instance streams only its own node's
+// pods (otherwise every node would ship duplicate copies).
+//
+// Features:
+//   - Node-local discovery via a spec.nodeName field selector.
+//   - Normalized `level` label (klog / JSON / logfmt detection).
+//   - Multi-tenant: stamps the Loki tenant via stage.tenant.
+//
+// This module intentionally does NOT redact or drop lines — those rules are
+// site-specific. To add them, point `forward_to` at your own loki.process
+// (redaction/drops) which then forwards to loki.write.
+//
+// Note: unlike k8s_pod_logs_file, there is no `stream` label — the API log
+// endpoint does not expose the stdout/stderr stream separately.
+//
+// Requirements:
+//   - RBAC: get/list/watch on pods AND get on pods/log.
+//
+// Usage:
+//   k8s_pod_logs_api.kubernetes "my_app" {
+//       namespaces = ["my-namespace"]
+//       tenant_id  = "my-tenant"
+//       forward_to = [loki.write.default.receiver]
+//   }
+declare "kubernetes" {
+	// -- Required -----------------------------------------------------------
+	argument "forward_to" {
+		comment = "Must be a list(LogsReceiver) where collected logs should be forwarded to"
+	}
+
+	argument "tenant_id" {
+		comment = "The Loki tenant (X-Scope-OrgID) to stamp on collected logs"
+	}
+
+	// -- Optional -----------------------------------------------------------
+	argument "namespaces" {
+		comment  = "The namespaces to look for targets in (default: [] is all namespaces)"
+		optional = true
+	}
+
+	argument "node_name" {
+		comment  = "The node name used for node-local discovery (default: sys.env(\"NODE_NAME\"))"
+		optional = true
+	}
+
+	argument "cluster_name" {
+		comment  = "Value for the static cluster_name label (default: sys.env(\"CLUSTER_NAME\"))"
+		optional = true
+	}
+
+	argument "project_label" {
+		comment  = "Pod meta-label to map to a project_name label, e.g. \"__meta_kubernetes_pod_label_app_kubernetes_io_part_of\". Empty disables it (default: \"\")"
+		optional = true
+	}
+
+	discovery.kubernetes "pods" {
+		role = "pod"
+
+		namespaces {
+			names = coalesce(argument.namespaces.value, [])
+		}
+
+		// Under a DaemonSet each instance must stream only its own node's
+		// pods, so discovery is node-scoped via the spec.nodeName selector.
+		selectors {
+			role  = "pod"
+			field = "spec.nodeName=" + coalesce(argument.node_name.value, sys.env("NODE_NAME"))
+		}
+	}
+
+	discovery.relabel "pods" {
+		targets = discovery.kubernetes.pods.targets
+
+		rule {
+			source_labels = ["__meta_kubernetes_namespace"]
+			action        = "replace"
+			target_label  = "namespace"
+		}
+
+		rule {
+			source_labels = ["__meta_kubernetes_pod_node_name"]
+			action        = "replace"
+			target_label  = "node"
+		}
+
+		rule {
+			source_labels = ["__meta_kubernetes_pod_host_ip"]
+			action        = "replace"
+			target_label  = "node_ip"
+		}
+
+		rule {
+			source_labels = ["__meta_kubernetes_pod_container_name"]
+			action        = "replace"
+			target_label  = "container"
+		}
+
+		rule {
+			source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+			action        = "replace"
+			target_label  = "app"
+		}
+
+		rule {
+			source_labels = [
+				"__meta_kubernetes_namespace",
+				"__meta_kubernetes_pod_container_name",
+			]
+			action       = "replace"
+			target_label = "job"
+			separator    = "/"
+		}
+
+		// Optional project_name label, sourced from a caller-provided pod label.
+		// When project_label is unset the source resolves to a meta label that
+		// never exists, leaving project_name empty (and thus unset).
+		rule {
+			source_labels = [coalesce(argument.project_label.value, "__meta_kubernetes_pod_label_k8s_pod_logs_api_unset")]
+			action        = "replace"
+			target_label  = "project_name"
+		}
+	}
+
+	// Stream logs via the apiserver (no __path__ needed).
+	loki.source.kubernetes "pods" {
+		targets    = discovery.relabel.pods.output
+		forward_to = [loki.process.pods.receiver]
+	}
+
+	loki.process "pods" {
+		forward_to = argument.forward_to.value
+
+		// Log level extraction. Default unknown, detect klog / JSON / logfmt
+		// level tokens, then normalize aliases and case.
+		stage.static_labels {
+			values = {
+				level = "unknown",
+			}
+		}
+
+		// klog: single-letter level + MMDD, e.g. "I0119 ..." -> I/W/E/F
+		stage.match {
+			selector = "{level=\"unknown\"} |~ \"([IWEF][0-9]{4}\\\\s+[0-9]{2}:[0-9]{2}:[0-9]{2}\\\\.[0-9]+)\""
+
+			stage.regex {
+				expression = "((?P<level>[IWEF])[0-9])"
+			}
+
+			stage.labels {
+				values = {
+					level = "",
+				}
+			}
+
+			stage.replace {
+				source     = "level"
+				expression = "(I)"
+				replace    = "info"
+			}
+
+			stage.replace {
+				source     = "level"
+				expression = "(W)"
+				replace    = "warn"
+			}
+
+			stage.replace {
+				source     = "level"
+				expression = "(E)"
+				replace    = "error"
+			}
+
+			stage.replace {
+				source     = "level"
+				expression = "(F)"
+				replace    = "fatal"
+			}
+		}
+
+		// JSON / logfmt: "level":"info", lvl=info, severity=error
+		stage.match {
+			selector = "{level=\"unknown\"} |~ \"(?i)(\\\"level\\\"|lvl|severity)\\\\s*[:=]\\\\s*\\\"?(trace|debug|info|warn|warning|error|err|fatal|crit|critical)\\\"?\""
+
+			stage.regex {
+				expression = "(?i)(\"level\"|lvl|severity)\\s*[:=]\\s*\"?(?P<level>trace|debug|info|warn|warning|error|err|fatal|crit|critical)\"?"
+			}
+
+			stage.labels {
+				values = {
+					level = "",
+				}
+			}
+		}
+
+		// Normalize aliases and case.
+		stage.replace {
+			source     = "level"
+			expression = "(?i)^(warning)$"
+			replace    = "warn"
+		}
+
+		stage.replace {
+			source     = "level"
+			expression = "(?i)^(err)$"
+			replace    = "error"
+		}
+
+		stage.replace {
+			source     = "level"
+			expression = "(?i)^(crit|critical)$"
+			replace    = "critical"
+		}
+
+		stage.template {
+			source   = "level"
+			template = "{{ ToLower .Value }}"
+		}
+
+		stage.labels {
+			values = {
+				level = "",
+			}
+		}
+
+		stage.label_drop {
+			values = ["instance"]
+		}
+
+		// Static cluster_name label.
+		stage.static_labels {
+			values = {
+				cluster_name = coalesce(argument.cluster_name.value, sys.env("CLUSTER_NAME")),
+			}
+		}
+
+		stage.tenant {
+			value = argument.tenant_id.value
+		}
+	}
+}
