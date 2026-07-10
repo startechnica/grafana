@@ -19,7 +19,8 @@
 //
 // Requirements:
 //   - Host /var/log mounted read-only into the collector.
-//   - NODE_NAME exposed to the collector (or pass node_name explicitly).
+//   - K8S_NODE_NAME exposed to the collector (the Grafana Alloy Helm chart
+//     injects this automatically from spec.nodeName); or pass node_name.
 //   - RBAC: get/list/watch on pods.
 //
 // Usage:
@@ -45,7 +46,7 @@ declare "kubernetes" {
 	}
 
 	argument "node_name" {
-		comment  = "The node name used for node-local discovery (default: sys.env(\"NODE_NAME\"))"
+		comment  = "The node name used for node-local discovery (default: sys.env(\"K8S_NODE_NAME\"), injected by the Alloy Helm chart)"
 		optional = true
 	}
 
@@ -70,7 +71,7 @@ declare "kubernetes" {
 		// node-scoped via the spec.nodeName field selector.
 		selectors {
 			role  = "pod"
-			field = "spec.nodeName=" + coalesce(argument.node_name.value, sys.env("NODE_NAME"))
+			field = "spec.nodeName=" + coalesce(argument.node_name.value, sys.env("K8S_NODE_NAME"))
 		}
 	}
 
