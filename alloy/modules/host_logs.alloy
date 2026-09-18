@@ -216,28 +216,27 @@ declare "journal" {
 	loki.relabel "journal" {
 		forward_to = []
 
-		// Container stdout/stderr, dropped first so nothing downstream pays
-		// for it. Podman's and Docker's journald log drivers stamp
-		// CONTAINER_NAME and CONTAINER_ID on every line a container writes;
-		// on the Podman hosts here that is 3951 of 5727 entries over 30
-		// minutes (69%) -- mongodb, patroni, haproxy, pgbouncer, vip-manager.
-		// A Docker host left on the default json-file driver puts no container
-		// logs in the journal at all (verified on the mogina hosts), so this
-		// rule is free there.
+		// Marks container stdout/stderr for the pipeline, which drops it.
+		// Podman's and Docker's journald log drivers stamp CONTAINER_NAME and
+		// CONTAINER_ID on every line a container writes; on the Podman hosts
+		// here that is 3951 of 5727 journal entries over 30 minutes (69%) --
+		// mongodb, patroni, haproxy, pgbouncer, vip-manager. A Docker host on
+		// the default json-file driver puts no container logs in the journal
+		// at all (verified on the mogina hosts), so this costs nothing there.
 		//
-		// The coalesce is load-bearing, not defensive noise. An unknown value
-		// -- a typo like "Drop" -- makes the map lookup yield an EMPTY regex,
-		// and an empty relabel regex is anchored to ^$, which matches every
-		// entry that has NO container name: it would silently drop all HOST
-		// logs and keep only the container ones, the exact inverse. Falling
-		// back to a never-matching pattern makes a typo fail OPEN.
+		// Dropping them HERE with action = "drop" also works and is cheaper,
+		// but it is the wrong signal: an entry that relabeling drops reaches
+		// the journal tailer with no labels, which counts it as a PARSE ERROR
+		// (loki_source_journal_target_parsing_errors_total, error="empty_
+		// labels"). Deployed that way on ziarahub1 it logged 8414 "parsing
+		// errors" in one restart window for logs that were being excluded
+		// exactly as intended, which would fire any alert watching that metric
+		// for a broken journal reader. The pipeline's stage.match instead
+		// counts them as loki_process_dropped_lines_total with a named reason.
 		rule {
 			source_labels = ["__journal_container_name"]
-			action        = "drop"
-			regex = coalesce({
-				"drop" = ".+",
-				"keep" = "\\x00",
-			}[coalesce(argument.container_logs.value, "drop")], "\\x00")
+			action        = "replace"
+			target_label  = "tmp_container"
 		}
 
 		// The unit that emitted the entry. _SYSTEMD_UNIT is set on messages
@@ -440,6 +439,30 @@ declare "journal" {
 	loki.process "journal" {
 		// The embedded writer unless the caller supplied its own receivers.
 		forward_to = coalesce(argument.forward_to.value, [loki.write.default.receiver])
+
+		// Container stdout/stderr, marked by the relabel rule above. Dropped
+		// before any other stage runs, and counted under a named reason rather
+		// than as a journal parse error -- see the comment on that rule.
+		//
+		// The "keep" branch selects a label no entry carries, which is a valid
+		// selector matching nothing, since Alloy has no conditional blocks. The
+		// coalesce makes an unknown value (a typo like "Drop") fall back to
+		// that same never-matching selector, so a typo keeps everything rather
+		// than failing the component.
+		stage.match {
+			selector = coalesce({
+				"drop" = `{tmp_container=~".+"}`,
+				"keep" = `{host_logs_never_matches="1"}`,
+			}[coalesce(argument.container_logs.value, "drop")], `{host_logs_never_matches="1"}`)
+
+			action              = "drop"
+			drop_counter_reason = "container_log"
+		}
+
+		// Never reaches Loki: it exists only to carry the marker this far.
+		stage.label_drop {
+			values = ["tmp_container"]
+		}
 
 		// Podman healthcheck bookkeeping. Every healthcheck run emits a podman
 		// "container health_status" line AND a pair of audit SERVICE_START /
