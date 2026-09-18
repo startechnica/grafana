@@ -376,13 +376,74 @@ declare "journal" {
 			target_label  = "level"
 		}
 
-		// Not every entry has a PRIORITY to derive a level from. Kernel audit
-		// records (_TRANSPORT=audit) carry none at all -- 1724 of 6705 entries
-		// over 30 minutes on the Podman hosts here, 26%, and they are the
-		// security-relevant ones: every login, every service start and stop.
-		// Without this fallback they reach Loki with no level label, so any
-		// dashboard or alert that filters on level drops them silently. The
-		// value matches what the files declare uses for an unparseable line.
+		// Kernel audit records carry no PRIORITY, but journald does expose the
+		// record's own structure as fields, so the level comes from the record
+		// itself rather than from parsing its text: _AUDIT_TYPE_NAME names the
+		// record type (AVC, BPF, SERVICE_START; types journald has no name for
+		// come through as AUDIT<number>), and AUDIT_FIELD_RES is the res=
+		// outcome, which on the hosts here takes exactly two values, success
+		// and failed. Both are kept as labels here and demoted to structured
+		// metadata in the pipeline.
+		rule {
+			source_labels = ["__journal__audit_type_name"]
+			action        = "replace"
+			target_label  = "audit_type"
+		}
+
+		rule {
+			source_labels = ["__journal_audit_field_res"]
+			action        = "replace"
+			target_label  = "audit_result"
+		}
+
+		// Each of these fires only when level is still empty -- the ";"-join
+		// matches nothing before the separator -- so a record that DID carry a
+		// priority keeps it. Denials are matched before outcomes because an
+		// SELinux denial carries no res= field of its own.
+		rule {
+			source_labels = ["level", "audit_type"]
+			action        = "replace"
+			separator     = ";"
+			regex         = "^;(AVC|USER_AVC|ANOM_.*|SECCOMP|INTEGRITY_.*)$"
+			replacement   = "warn"
+			target_label  = "level"
+		}
+
+		// A denied or failed operation -- a rejected login, a sudo that was not
+		// permitted. Deliberately warn and not error: on any host reachable
+		// from a network this is continuous background noise (typos, scanners),
+		// and at error it would keep the error panel permanently red and
+		// devalue it. Real faults still arrive as errors by another route --
+		// systemd logs a failed unit start at priority 3 in its own right, so
+		// nothing is lost by keeping the audit copy at warn. The security view
+		// is the failed-auth query, not the level.
+		rule {
+			source_labels = ["level", "audit_result"]
+			action        = "replace"
+			separator     = ";"
+			regex         = "^;failed$"
+			replacement   = "warn"
+			target_label  = "level"
+		}
+
+		// A successful audited operation is exactly what info means: a login
+		// that worked, a service that started, a key that was used.
+		rule {
+			source_labels = ["level", "audit_result"]
+			action        = "replace"
+			separator     = ";"
+			regex         = "^;success$"
+			replacement   = "info"
+			target_label  = "level"
+		}
+
+		// Last resort for an entry that has neither a priority nor an audit
+		// outcome to derive a level from. Without it such entries reach Loki
+		// with no level label at all and any dashboard or alert filtering on
+		// level drops them silently -- which is what happened to every audit
+		// record (26% of entries on the Podman hosts here) before the rules
+		// above gave them one. The value matches what the files declare uses
+		// for a line it cannot parse.
 		rule {
 			source_labels = ["level"]
 			action        = "replace"
@@ -514,10 +575,17 @@ declare "journal" {
 		// set. pid turns over constantly and boot_id changes on every reboot:
 		// as stream labels they would multiply streams, as structured metadata
 		// they stay queryable (`| pid="1234"`) for free.
+		// audit_type and audit_result join them: they exist only on audit
+		// records, they are what you actually filter on when reading them
+		// (`| audit_result="failed"` beats a regex over the line), and as
+		// stream labels they would multiply the audit streams by the number of
+		// record types for no selector benefit.
 		stage.structured_metadata {
 			values = {
-				pid     = "",
-				boot_id = "",
+				pid           = "",
+				boot_id       = "",
+				audit_type    = "",
+				audit_result  = "",
 			}
 		}
 
