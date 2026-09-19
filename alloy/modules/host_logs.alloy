@@ -163,9 +163,9 @@ declare "journal" {
 		default  = "drop"
 	}
 	argument "drop_units" {
-		comment  = "Regex matching units whose INFO-level chatter is dropped -- periodic timers that log a start/stop pair on every run and say nothing worth keeping when they succeed (default: \"fwupd-refresh\"). Set \"\" to keep everything. Matched against the LINE, not the unit label, because the unit a message is ABOUT is not the unit label it carries: systemd's own \"Finished fwupd-refresh.service\" messages are emitted by PID 1 and so are labelled unit=init.scope, and the audit records for the same run carry no unit label at all. Only level=info is dropped, so a failure from the same unit still arrives at warn or error."
+		comment  = "Regex matching the unit label of entries whose INFO-level chatter is dropped -- periodic timers that log a start/stop pair on every run and say nothing worth keeping when they succeed (default: \"fwupd-refresh.service\"). Set \"\" to keep everything. Fully anchored, as LogQL label matchers always are, so it matches whole unit names only. Only level=info is dropped, so a failure from the same unit still arrives at warn or error."
 		optional = true
-		default  = "fwupd-refresh"
+		default  = "fwupd-refresh.service"
 	}
 	argument "healthcheck_noise" {
 		comment  = "What to do with Podman healthcheck bookkeeping -- the \"container health_status\" lines and the audit SERVICE_START/STOP pairs for the transient units they run in: \"drop\" (default) or \"keep\". Roughly 30% of journal entries on the Podman hosts here. Use \"keep\" where audit completeness is a compliance requirement."
@@ -244,19 +244,26 @@ declare "journal" {
 			target_label  = "tmp_container"
 		}
 
-		// The unit that emitted the entry. _SYSTEMD_UNIT is set on messages
-		// FROM a unit's own processes; systemd's messages ABOUT a unit
-		// ("Started foo.service") carry UNIT instead, so fall back to it. The
-		// fallback rule joins the current value and the fallback with ";" and
-		// only matches when the first is empty -- nothing before the separator.
+		// The unit the entry is ABOUT, which is not always the unit that emitted
+		// it. systemd's own messages about a unit ("Started foo.service",
+		// "foo.service: Deactivated successfully") are emitted BY PID 1, so
+		// their _SYSTEMD_UNIT is init.scope while the unit they concern is in
+		// UNIT. Reading _SYSTEMD_UNIT first would label every one of those
+		// init.scope, which buries a unit's start/stop history under a label
+		// nobody queries and makes `{unit="foo.service"}` an incomplete answer.
+		//
+		// So UNIT wins where it exists, and _SYSTEMD_UNIT is the fallback that
+		// covers the ordinary case: a process logging from inside its own unit.
+		// Each fallback joins the current value with the next source and fires
+		// only when the first is empty -- nothing before the ";" separator.
 		rule {
-			source_labels = ["__journal__systemd_unit"]
+			source_labels = ["__journal_unit"]
 			action        = "replace"
 			target_label  = "unit"
 		}
 
 		rule {
-			source_labels = ["unit", "__journal_unit"]
+			source_labels = ["unit", "__journal__systemd_unit"]
 			action        = "replace"
 			separator     = ";"
 			regex         = "^;(.+)$"
@@ -609,27 +616,27 @@ declare "journal" {
 		// idle host here, none of which says anything a failure would not say
 		// louder.
 		//
-		// Matched against the line rather than the unit label, because for
-		// these messages the unit label is not the unit the message is ABOUT:
-		// systemd emits them from PID 1, so they carry unit=init.scope, and
-		// the audit records carry no unit label at all.
+		// Matched on the unit LABEL, which works only because the rules above
+		// read UNIT before _SYSTEMD_UNIT: all four of those messages carry the
+		// unit they concern, where previously systemd's two said init.scope
+		// and the audit pair had no unit at all. A label matcher is anchored
+		// and cannot misfire on an unrelated line that merely mentions the
+		// name, which a line filter can.
 		//
 		// Restricted to level=info deliberately: the same unit FAILING still
 		// arrives, because systemd logs a failed unit at priority 3 and the
 		// audit record then carries res=failed, and both land above info.
 		//
-		// Disabling this needs care: an empty drop_units would build
-		// |~ "", which matches EVERY line and would silently drop every info
-		// entry on the host. So the empty case is handled by SELECTOR, not by
-		// regex -- the map yields the never-matching label selector for "" and
-		// misses (yielding empty) for any real pattern, at which point the
-		// coalesce falls through to the real filter. Escaping a
-		// never-matching regex into a LogQL string is the alternative and it
-		// is a trap: the stage rejects "[^\s\S]" with "invalid char escape".
+		// The empty case is handled by swapping the SELECTOR: the map yields a
+		// never-matching selector for "" and misses (yielding empty) for any
+		// real pattern, at which point the coalesce falls through to the real
+		// one. An empty value interpolated into the matcher would give
+		// unit=~"", which matches every entry that has NO unit label at all --
+		// most of the journal -- and would silently drop it.
 		stage.match {
 			selector = coalesce({
 				"" = `{host_logs_never_matches="1"}`,
-			}[coalesce(argument.drop_units.value, "")], `{level="info"} |~ "` + argument.drop_units.value + `"`)
+			}[coalesce(argument.drop_units.value, "")], `{level="info", unit=~"` + argument.drop_units.value + `"}`)
 
 			action              = "drop"
 			drop_counter_reason = "periodic_unit_noise"
