@@ -162,6 +162,11 @@ declare "journal" {
 		optional = true
 		default  = "drop"
 	}
+	argument "drop_units" {
+		comment  = "Regex matching units whose INFO-level chatter is dropped -- periodic timers that log a start/stop pair on every run and say nothing worth keeping when they succeed (default: \"fwupd-refresh\"). Set \"\" to keep everything. Matched against the LINE, not the unit label, because the unit a message is ABOUT is not the unit label it carries: systemd's own \"Finished fwupd-refresh.service\" messages are emitted by PID 1 and so are labelled unit=init.scope, and the audit records for the same run carry no unit label at all. Only level=info is dropped, so a failure from the same unit still arrives at warn or error."
+		optional = true
+		default  = "fwupd-refresh"
+	}
 	argument "healthcheck_noise" {
 		comment  = "What to do with Podman healthcheck bookkeeping -- the \"container health_status\" lines and the audit SERVICE_START/STOP pairs for the transient units they run in: \"drop\" (default) or \"keep\". Roughly 30% of journal entries on the Podman hosts here. Use \"keep\" where audit completeness is a compliance requirement."
 		optional = true
@@ -558,6 +563,39 @@ declare "journal" {
 
 			action              = "drop"
 			drop_counter_reason = "podman_healthcheck_status"
+		}
+
+		// Periodic-timer chatter. A unit like fwupd-refresh runs on a timer and
+		// announces itself four times per run -- systemd's "Starting" and
+		// "Finished", its "Deactivated successfully", and an audit
+		// SERVICE_START/SERVICE_STOP pair -- 78 entries a day on an otherwise
+		// idle host here, none of which says anything a failure would not say
+		// louder.
+		//
+		// Matched against the line rather than the unit label, because for
+		// these messages the unit label is not the unit the message is ABOUT:
+		// systemd emits them from PID 1, so they carry unit=init.scope, and
+		// the audit records carry no unit label at all.
+		//
+		// Restricted to level=info deliberately: the same unit FAILING still
+		// arrives, because systemd logs a failed unit at priority 3 and the
+		// audit record then carries res=failed, and both land above info.
+		//
+		// Disabling this needs care: an empty drop_units would build
+		// |~ "", which matches EVERY line and would silently drop every info
+		// entry on the host. So the empty case is handled by SELECTOR, not by
+		// regex -- the map yields the never-matching label selector for "" and
+		// misses (yielding empty) for any real pattern, at which point the
+		// coalesce falls through to the real filter. Escaping a
+		// never-matching regex into a LogQL string is the alternative and it
+		// is a trap: the stage rejects "[^\s\S]" with "invalid char escape".
+		stage.match {
+			selector = coalesce({
+				"" = `{host_logs_never_matches="1"}`,
+			}[coalesce(argument.drop_units.value, "")], `{level="info"} |~ "` + argument.drop_units.value + `"`)
+
+			action              = "drop"
+			drop_counter_reason = "periodic_unit_noise"
 		}
 
 		// Empty-valued entries are omitted rather than indexed as "".
