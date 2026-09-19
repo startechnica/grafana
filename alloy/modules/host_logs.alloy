@@ -350,8 +350,30 @@ declare "journal" {
 		rule {
 			source_labels = ["unit"]
 			action        = "replace"
-			regex         = "[0-9a-f]{32,}-[0-9a-f]{8,}\\.(service|scope)"
+			regex         = "[0-9a-f]{32,}-[0-9a-f]{8,}\\.(service|scope|timer)"
 			replacement   = "transient.$1"
+			target_label  = "unit"
+		}
+
+		// Everything else a container runtime names after a container ID.
+		// Reading UNIT rather than _SYSTEMD_UNIT (above) surfaced these: they
+		// were always in the journal, but as the SUBJECT of PID 1's messages,
+		// so they used to hide behind init.scope. On this host they are the
+		// single largest source of unit values -- of 207 distinct subjects, 82
+		// carry a container-ID-sized hex run, and 49 of those are podman's
+		// per-container overlay mounts (…-<64 hex>-merged.mount,
+		// …\x2dcontainers-<64 hex>-userdata-shm.mount), minted and discarded
+		// with every container start.
+		//
+		// Collapsed to the stable prefix, so the name still says which mount
+		// tree it was and the churn stops at the id. The non-greedy prefix
+		// stops at the FIRST 32-character hex run; a real unit name such as
+		// run-user-1000.mount has none and is untouched.
+		rule {
+			source_labels = ["unit"]
+			action        = "replace"
+			regex         = "(.*?)-?[0-9a-f]{32,}.*\\.mount"
+			replacement   = "$1.mount"
 			target_label  = "unit"
 		}
 
