@@ -91,6 +91,14 @@ declare "unix" {
 		comment  = "Complete external_labels map for the embedded remote_write, REPLACING the region/zone/cluster_name defaults (default: unset, which keeps them). Use it to carry site-specific labels such as environment or role."
 		optional = true
 	}
+	// Alloy cannot pass relabel rule{} blocks as a value, so custom relabeling is
+	// injected by receiver: point this at your own prometheus.relabel, which then
+	// forwards back to this module's exported .receiver (the embedded remote_write).
+	// An explicit [] coalesces to the default -- pass a real receiver, or omit.
+	argument "extra_relabel_to" {
+		comment  = "Optional list(MetricsReceiver) to forward node metrics to INSTEAD of the embedded remote_write -- typically your own prometheus.relabel for site-specific rules, which forwards back to this module's exported .receiver (default: the embedded remote_write)."
+		optional = true
+	}
 
 	prometheus.exporter.unix "node" {
 		rootfs_path = "/host/root"
@@ -188,7 +196,10 @@ declare "unix" {
 	// resolves to constants.hostname -- the same value uname already reports -- so
 	// it is a no-op on standalone VMs and Docker/Podman hosts.
 	prometheus.relabel "node" {
-		forward_to = [prometheus.remote_write.default.receiver]
+		// Caller's chain if extra_relabel_to is set, else straight to remote_write.
+		// The nodename rule below always runs first, so custom rules see the
+		// normalized value.
+		forward_to = coalesce(argument.extra_relabel_to.value, [prometheus.remote_write.default.receiver])
 
 		rule {
 			source_labels = ["nodename"]
@@ -196,6 +207,12 @@ declare "unix" {
 			target_label  = "nodename"
 			replacement   = coalesce(argument.node_name.value, sys.env("K8S_NODE_NAME"), constants.hostname)
 		}
+	}
+
+	// Exposed so a caller passing extra_relabel_to can forward its own
+	// prometheus.relabel back into this module's tenant-configured remote_write.
+	export "receiver" {
+		value = prometheus.remote_write.default.receiver
 	}
 
 	prometheus.remote_write "default" {
@@ -878,6 +895,14 @@ declare "containers" {
 		comment  = "Complete external_labels map for the embedded remote_write, REPLACING the region/zone/cluster_name defaults (default: unset, which keeps them). Use it to carry site-specific labels such as environment or role."
 		optional = true
 	}
+	// Alloy cannot pass relabel rule{} blocks as a value, so custom relabeling is
+	// injected by receiver: point this at your own prometheus.relabel, which then
+	// forwards back to this module's exported .receiver (the embedded remote_write).
+	// An explicit [] coalesces to the default -- pass a real receiver, or omit.
+	argument "extra_relabel_to" {
+		comment  = "Optional list(MetricsReceiver) to forward container metrics to INSTEAD of the embedded remote_write -- typically your own prometheus.relabel for site-specific rules, which forwards back to this module's exported .receiver (default: the embedded remote_write)."
+		optional = true
+	}
 
 	prometheus.exporter.cadvisor "containers" {
 		docker_host = argument.docker_host.value
@@ -922,8 +947,17 @@ declare "containers" {
 		}
 	}
 
+	// Exposed so a caller passing extra_relabel_to can forward its own
+	// prometheus.relabel back into this module's tenant-configured remote_write.
+	export "receiver" {
+		value = prometheus.remote_write.default.receiver
+	}
+
 	prometheus.relabel "containers" {
-		forward_to = [prometheus.remote_write.default.receiver]
+		// Caller's chain if extra_relabel_to is set, else straight to remote_write.
+		// The runtime/container_id/name rules below always run first, so custom
+		// rules see the normalized labels.
+		forward_to = coalesce(argument.extra_relabel_to.value, [prometheus.remote_write.default.receiver])
 
 		// Docker first, and before any rule below writes name: only the
 		// Docker handler names containers, so a name at this point means a
