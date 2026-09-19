@@ -110,7 +110,7 @@ declare "unix" {
 		// The xfs collector fails to parse /proc/fs/xfs/stat on some kernels
 		// ("xpc" line is not a uint), erroring on every scrape. It yields no
 		// useful series here, so disable it.
-		disable_collectors = ["xfs"]
+		disable_collectors = ["infiniband", "tapestats", "xfs"]
 
 		filesystem {
 			// Podman's per-container /dev/shm is a tmpfs, so fs_types_exclude
