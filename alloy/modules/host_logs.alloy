@@ -264,6 +264,43 @@ declare "journal" {
 			target_label  = "unit"
 		}
 
+		// Audit records name the unit they are ABOUT, and journald has already
+		// parsed it out of the record into its own field -- there is nothing to
+		// regex out of the message text. Without this an audit SERVICE_START
+		// carries no unit at all, so a query for a unit misses every audit
+		// record concerning it. Same empty-only fallback as above, so a real
+		// _SYSTEMD_UNIT is never overwritten.
+		rule {
+			source_labels = ["unit", "__journal_audit_field_unit"]
+			action        = "replace"
+			separator     = ";"
+			regex         = "^;(.+)$"
+			replacement   = "$1"
+			target_label  = "unit"
+		}
+
+		// Audit writes the unit WITHOUT its suffix -- "alloy" where systemd
+		// says "alloy.service", measured across all 34 unit values this host's
+		// audit subsystem produces. Left alone that gives every service two
+		// label values, one per source, and a query on either misses half its
+		// entries. SERVICE_START and SERVICE_STOP are emitted for services, so
+		// restoring ".service" is the correct normalization rather than a
+		// guess. The regex is fully anchored and [^.]+ cannot match a value
+		// that already has a suffix, so systemd-derived names are untouched --
+		// every real systemd unit name carries one (.service, .scope, .slice,
+		// .mount, .socket, .timer, .target).
+		//
+		// This also puts the podman healthcheck transients back into the form
+		// the collapse rule below expects: <hex>-<hex> becomes
+		// <hex>-<hex>.service and is then folded to transient.service.
+		rule {
+			source_labels = ["unit"]
+			action        = "replace"
+			regex         = "([^.]+)"
+			replacement   = "$1.service"
+			target_label  = "unit"
+		}
+
 		// Collapse the unit names that are minted per event. Each of these
 		// embeds an id -- a login session, a container, a transient
 		// systemd-run job -- so indexed verbatim they open a new Loki stream
